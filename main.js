@@ -32,6 +32,7 @@ var dispatcher = require('httpdispatcher');
 var bind = require('bind');
 var PORT = 1377;
 
+var numberOfReads = 25;
 
 var mraa = require("mraa");
 
@@ -52,12 +53,22 @@ var colorWhite = {R: 40,G: 40,B: 40};
 var myAnalogLightPin = new mraa.Aio(0);
 
 //air quality sensors parameters
+//air quality sensor library
+var upmTP401 = require('jsupm_gas');
 //GROVE Kit A3 Connector --> Aio(3)
-var myAnalogAirPin = new mraa.Aio(3);
+var airSensor = new upmTP401.TP401(3);
+//warm up sensor
+console.log("Sensor is warming up. Wait 3 minutes to get correct values from sensor");
+var elapsedMinutes = 0;
+//print a message every passing minute
+var waiting = setInterval(function() {
+        console.log(++elapsedMinutes + " minute(s) passed.");
+        if(elapsedMinutes === 3) clearInterval(waiting);
+    }, 60000);
 
 //Temperature sensor parameters
 //GROVE Kit A1 Connector --> Aio(1)
-var myAnalogPin = new mraa.Aio(1);
+var myTemperatureSensor = new mraa.Aio(1);
 var B = 3975;
 
 /*
@@ -76,23 +87,23 @@ function getSensorsValues() {
     //}, 4000);
 }
 
-console.log("Sample Reading Grove Kit Temperature Sensor");
-
 /*
 Function: getTemperature()
 Description: Read values from temperature sensor and return it
 */
 function getTemperature(){
- 
-    var a = myAnalogPin.read();
-        console.log("Analog Pin (A1) Output: " + a);
+ 	var rawTemp = 0;
+	for (var i = 0; i< numberOfReads; i++)
+		rawTemp += myTemperatureSensor.read();
+	rawTemp = rawTemp/numberOfReads;
+        //console.log("Analog Pin Temperature (A1) Output: " + rawTemp);
         //console.log("Checking....");
         
-        var resistance = (1023 - a) * 10000 / a; //get the resistance of the sensor;
+        var resistance = (1023 - rawTemp) * 10000 / rawTemp; //get the resistance of the sensor;
         //console.log("Resistance: "+resistance);
         var celsius_temperature = 1 / (Math.log(resistance / 10000) / B + 1 / 298.15) - 273.15;//convert to temperature via datasheet ;
 
-        console.log("Celsius Temperature: " + celsius_temperature);
+        //console.log("Celsius Temperature: " + celsius_temperature);
     //return celsius temperature with 2 decimal digits
     return celsius_temperature.toFixed(2);
 }
@@ -102,18 +113,42 @@ Function: getLight()
 Description: Read values from light sensor and return it
 */
 function getLight(){
-    var light = myAnalogLightPin.read();
-    return light;
+	var light = 0;
+	for(var i = 0; i< numberOfReads; i++){
+		light += myAnalogLightPin.read();
+	}
+	//console.log("Light: " + light);
+    return (light/numberOfReads).toFixed(0);
 }
 
 /*
 Function: getAirQuality()
-Description: Read values from air quality sensor and return it
+Description: Read values from air quality sensor and return them as an array
 */
 function getAirQuality(){
-    var airQuality = myAnalogAirPin.read();
-    return airQuality;
+	var airQualityValues = {};
+	//read values (consecutive reads might vary slightly)
+    airQualityValues.value = airSensor.getSample();
+    airQualityValues.ppm = airSensor.getPPM().toFixed(2);
+    //write the sensor values to the console
+    console.log("raw: " + airQualityValues.value + " ppm: " + (" " + airQualityValues.ppm).substring(-5, 5) + "   " + airQuality(airQualityValues.value));
+	return airQualityValues;
 }
+
+/*
+Function: airQuality(value)
+Parameters: value from air quality sensor
+Description: give a qualitative meaning to the value from the sensor
+*/
+function airQuality(value)
+{
+    if(value < 50) return "Fresh Air";
+    if(value < 200) return "Normal Indoor Air";
+    if(value < 400) return "Low Pollution";
+    if(value < 600) return "High Pollution - Action Recommended";
+    return "Very High Pollution - Take Action Immediately";
+}
+
 
 /*
 Function: printToLcd()
@@ -137,7 +172,7 @@ function printToLcd(ambientValues){
     //console.log("Temp: " + ambientValues.temp);
     myLCD.write("Temp:" + ambientValues.temp);
     myLCD.setCursor(1,0);
-    myLCD.write("Air:" + ambientValues.airQuality);
+    myLCD.write("Air:" + ambientValues.airQuality.value);
     myLCD.write(" Lux:" + ambientValues.light);
     
 }
@@ -171,14 +206,16 @@ dispatcher.onGet("/sensors", function(req, res, chain) {
 	if I start main.js typing node main.js, the application binds the template correctly
 	if I load main.js with built in feature of XDK, the application does not find sensors.tpl in relative path but it needs absolute path
 	*/
-	var tpl = "sensors.tpl";
+	var tpl = "sensors.html";
 	//check if the application find the tamplate in relative path
 	if(!fs.existsSync(tpl))
-    	tpl='/home/root/.node_app_slot/sensors.tpl';                     
+		tpl='/home/root/.node_app_slot/sensors.html';                     
 	bind.toFile(tpl, {
 		temperature: ambientValues.temp,
 		light: ambientValues.light,
-		airQuality: ambientValues.airQuality
+		airQuality: ambientValues.airQuality.value,
+		ppm: ambientValues.airQuality.ppm,
+		humanReadableAirQuality: airQuality(ambientValues.airQuality.value)
 	}, function(data) {
 		res.writeHead(200, {'Content-Type': 'text/html'});
 		res.end(data);
@@ -212,7 +249,7 @@ function startButtonWatch() {
 //Create a server
 var server = http.createServer(handleRequest);
 //Lets start our server
-server.listen(PORT, function(){
+var listenFunction = server.listen(PORT, function(){
     //Callback triggered when server is successfully listening. Hurray!
     startButtonWatch();
     console.log("Server listening on: http://localhost:%s", PORT);

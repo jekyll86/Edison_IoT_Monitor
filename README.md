@@ -4,3 +4,5 @@ This is a very basic project entirely made in javascript through the IDE "Intel 
 Me and my friends, Roberto and Luigi, realized this project as starting point for a future home automation system.
 
 I want to thank Intel for this wonderful device and for the fantastic hackathon of Milan.
+
+http://www.instructables.com/id/Intel-Edison-IoT-remote-environmental-parameters-m/
